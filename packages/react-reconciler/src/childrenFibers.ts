@@ -96,15 +96,78 @@ function ChildReconciler(shouldTrackEffects: boolean) {
     function reconcileChildrenArray(returnFiber: FiberNode, currentFirstChild: FiberNode | null, newChild: any[]) {
         const existingChildren: ExistingChildren = new Map();
         let current = currentFirstChild;
+        let firstNewFiber: FiberNode | null = null;
+        let lastNewFiber: FiberNode | null = null;
+        let lastReuseFiberIndex: number = 0;
         while (current) {
             const key = current.key || current.index;
             existingChildren.set(key, current);
             current = current.sibling;
         }
-
         // 遍历newChild
+        for (let i = 0; i < newChild.length; i++) {
+            const after = newChild[i];
+            const newFiber = updateFromMap(returnFiber, existingChildren, i, after)
+            if (!newFiber) {
+                continue;
+            }
+            newFiber.index = i;
+            if (!lastNewFiber) {
+                firstNewFiber = lastNewFiber = newFiber
+            } else {
+                lastNewFiber.sibling = newFiber;
+                lastNewFiber = newFiber;
+            }
 
+            if (!shouldTrackEffects) {
+                continue;
+            }
 
+            if (newFiber.alternate) {
+                const alternate = newFiber.alternate;
+                if (lastReuseFiberIndex > alternate.index) {
+                    newFiber.flags |= Placement;
+                    continue
+                } else {
+                    lastReuseFiberIndex = alternate.index;
+                }
+            } else {
+                newFiber.flags |= Placement;
+            }
+        }
+        existingChildren.forEach((child) => {
+            deleteChild(returnFiber, child)
+        })
+        return firstNewFiber;
+
+    }
+
+    function updateFromMap(returnFiber: FiberNode, existingChildren: ExistingChildren, index: number, element: any) {
+        const key = element.key || index;
+        const before = existingChildren.get(key);
+        if (typeof element === 'string' || typeof element === 'number') {
+            if (before) {
+                if (before.tag === HostText) {
+                    existingChildren.delete(key);
+                    return useFiber(before, { content: element + '' })
+                }
+            }
+            return new FiberNode(HostText, { content: element + '' }, null)
+        }
+        if (typeof element === 'object' && element !== null) {
+            switch (element.$$type) {
+                case Symbol.for('react.element'):
+                    if (before) {
+                        if (before.type === element.type) {
+                            existingChildren.delete(key);
+                            return useFiber(before, element.props,)
+                        }
+                    }
+                    return createFiberFromElement(element)
+                default:
+                    break;
+            }
+        }
     }
 
     return function (returnFiber: FiberNode, currentFiber: FiberNode | null, newChild?: ReactElementType) {
